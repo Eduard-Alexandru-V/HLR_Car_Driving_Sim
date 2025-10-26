@@ -57,6 +57,7 @@ The goal of this project is to create a realistic and durable dashboard using re
 | Golf 4 Turn Signal Stalk | Provides left/right indicators and +/- buttons; input read via resistor ladder. | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/turn%20stalk.jpeg?raw=true" alt="Turn Singnal Stalk" width="200"> |
 | Golf 4 Wiper Stalk | Provides OK / UP / DOWN buttons and 4-step rotary switch; input read via resistor ladder. | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/wiper%20stalk.jpeg?raw=true" alt="Wiper Stalk" width="200"> |
 | Standard Hobby Servos (x4) | Drives the speedometer, tachometer, fuel, and temperature gauges via 3D-printed gearboxes (only for the tachometer and speedometer). | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/servo.jpeg?raw=true" alt="SG90 Servo" width="200"> |
+|OLED 0.96" I2C   |  Used for displaying the speed, fuel consumtion (average and instant) and much more  | <img src="https://github.com/Eduard-Alexandru-V/HLR_Car_Driving_Sim/blob/main/images/display-oled-096-i2c-iic-albastru.jpeg?raw=true" alt="OLED" width="200">
 | Custom 3D-Printed Gearboxes | Converts servo rotation to the original gauge needle movement; fits inside the cluster shell. | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/Gearbox.jpeg?raw=true" alt="Gearbox" width="200"> |
 | Resistors for Ladder Circuits | Used to differentiate multiple switch positions on single analog lines. | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/resistors.jpeg?raw=true" alt="Resistors" width="200"> |
 | USB Cable | Provides power and allows the Arduino to act as a joystick + serial device for SimHub. | <img src="https://github.com/Eduard-Alexandru-V/HRL_Car_Driving_Sim/blob/main/images/USB%20C%20cable.jpeg?raw=true" alt="USB C Cable" width="200"> |
@@ -90,7 +91,8 @@ The Arduino expects data from SimHub in the following order, each value on a sep
 | A1          | Turn stalk 3-position switch       | Analog (resistor ladder)   |
 | A2          | Wiper stalk OK / UP / DOWN buttons | Analog (resistor ladder)   |
 | A3          | Wiper stalk 4-step rotary switch   | Analog (resistor ladder)   |
-| D2–D5       | Servo outputs (speed, RPM, fuel, temp) | PWM                    |
+| D10 & D14-D16       | Servo outputs (speed, RPM, fuel, temp) | PWM                    |
+|D2 & D3      | Oled screen control pins          | SCL and SDA                |
 | USB         | HID joystick and SimHub serial     | Data connection            |
 
 ---
@@ -98,20 +100,24 @@ The Arduino expects data from SimHub in the following order, each value on a sep
 ## Assembly
 
 1. **Instrument Cluster**  
-   Disassemble the original Golf 4 cluster. Remove all electronics and stepper motors.  
-   Install the servos and 3D-printed gearboxes behind the gauge faces, aligning them with the original needle axes.
+  -  Disassemble the original Golf 4 cluster. Remove all electronics and stepper motors.
+  -  Print the gearboxes and when putting them together use a little bit of lube.
+  -  Install the servos and 3D-printed gearboxes behind the gauge faces, aligning them with the original needle axes.
+  -  Print the Oled mount and trim carefully the edges so it fits snugly in the casing of the cluster.
+  -  The gauge face needs to be cut a little bit to compensate the oled screen size.
+   
 
-2. **Stalk Inputs**  
-   Connect the turn signal and wiper stalks to the Arduino.  
-   Use resistor ladder circuits to read multiple positions on a single analog pin.
+3. **Stalk Inputs**  
+  -  Connect the turn signal and wiper stalks to the Arduino.  
+  -  Use resistor ladder circuits to read multiple positions on a single analog pin.
 
-3. **Wiring and Programming**  
-   Connect servos to the appropriate digital pins and flash the provided Arduino sketch.  
-   The Arduino will appear as both a joystick (for input) and a serial device (for telemetry).
+4. **Wiring and Programming**  
+ -  Connect servos to the appropriate digital pins and flash the provided Arduino sketch.  
+  -  The Arduino will appear as both a joystick (for input) and a serial device (for telemetry).
 
-4. **SimHub Configuration**  
-   Set up a custom serial output profile in SimHub to match the expected data format.  
-   Once connected, the gauges and inputs will function in real time.
+5. **SimHub Configuration**  
+-  Set up a custom serial output profile in SimHub to match the expected data format.  
+-  Once connected, the gauges and inputs will function in real time.
 
 ---
 
@@ -184,6 +190,8 @@ The firmware includes a basic line-based command system for runtime calibration 
 These commands do not persist after reset and are intended for quick tuning during installation.
 
 ## Arduino Code
+ ### First Version
+
 
 ```cpp
 #include <Servo.h>
@@ -488,6 +496,133 @@ void loop() {
   prevWiperA2 = curWiperA2;
 
   delay(5); // Small delay
+}
+```
+
+  ### Demo Version
+
+  ```ccp
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Servo.h>
+
+// OLED config
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+// Servo config
+Servo servo180_1;
+Servo servo180_2;
+Servo servo90_1;
+Servo servo90_2;
+
+// Sweep vars
+int pos = 0;
+int direction = 1;
+
+// Dashboard vars
+unsigned long lastPageChange = 0;
+unsigned long lastUpdate = 0;
+int currentPage = 0;
+const int pageCount = 2;
+
+// Simulated data
+float speed = 0;
+float instantFuel = 5.0;
+float avgFuel = 6.2;
+
+void setup() {
+  servo180_1.attach(3);
+  servo180_2.attach(5);
+  servo90_1.attach(6);
+  servo90_2.attach(9);
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    for(;;);
+  }
+
+  display.clearDisplay();
+  display.setTextColor(SSD1306_WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.println("Dashboard Demo");
+  display.display();
+  delay(1500);
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  // === Servo Sweep ===
+  if (now - lastUpdate >= 15) {
+    lastUpdate = now;
+    pos += direction;
+    if (pos >= 180 || pos <= 0) direction = -direction;
+
+    servo180_1.write(pos);
+    servo180_2.write(180 - pos);
+    int pos90 = map(pos, 0, 180, 0, 90);
+    servo90_1.write(pos90);
+    servo90_2.write(90 - pos90);
+
+    // Simulate speed + fuel data
+    speed = map(pos, 0, 180, 0, 120);  // 0–120 km/h
+    instantFuel = 3.5 + 1.5 * sin(pos * 3.14 / 90.0);
+    avgFuel = 5.5 + 0.3 * sin(pos * 3.14 / 180.0);
+  }
+
+  // === Page switching every 5 sec ===
+  if (now - lastPageChange >= 5000) {
+    lastPageChange = now;
+    currentPage = (currentPage + 1) % pageCount;
+  }
+
+  // === OLED Display ===
+  display.clearDisplay();
+
+  if (currentPage == 0) {
+    drawSpeedometer();
+  } else if (currentPage == 1) {
+    drawFuelPage();
+  }
+
+  display.display();
+}
+
+// === OLED Page Functions ===
+
+void drawSpeedometer() {
+  display.setTextSize(2);
+  display.setCursor(10, 10);
+  display.print("SPEED");
+
+  display.setTextSize(3);
+  display.setCursor(25, 35);
+  display.print((int)speed);
+
+  display.setTextSize(1);
+  display.setCursor(90, 45);
+  display.print("km/h");
+}
+
+void drawFuelPage() {
+  display.setTextSize(1);
+  display.setCursor(5, 10);
+  display.print("Fuel Consumption");
+
+  display.setTextSize(2);
+  display.setCursor(5, 30);
+  display.print("Inst: ");
+  display.print(instantFuel, 1);
+  display.print(" L");
+
+  display.setTextSize(2);
+  display.setCursor(5, 50);
+  display.print("Avg:  ");
+  display.print(avgFuel, 1);
+  display.print(" L");
 }
 ```
 
